@@ -45,9 +45,17 @@ npm run compile
 
 ### Running the Extension
 
-- Press F5 to open a new window with your extension loaded
-- Set breakpoints in your code inside `src/extension.ts` to debug
-- Find output from your extension in the debug console
+- Open this repository folder in VS Code (`code .`).
+- Trust this repository when prompted so workspace tasks and debugging can run.
+- In Run and Debug, select **Run Neon Extension**, then press F5 (or Fn+F5 on a Mac). This compiles the extension and opens an Extension Development Host window.
+- Click the Neon activity-bar entry in the development window to activate it, or run **Sign in to Neon** from the Command Palette.
+- Set breakpoints in `src/extension.ts` in the original editor window. Extension logs appear in that window's Debug Console.
+- For automatic TypeScript rebuilding, select **Run Neon Extension (watch)**. After editing, use **Developer: Reload Window** in the development window to load the rebuilt code. Restart debugging after changing `package.json` contribution points.
+- Build manually with Cmd+Shift+B on macOS (Ctrl+Shift+B elsewhere).
+
+TypeScript editing and extension debugging are built into VS Code; no additional editor extensions are required. The workspace uses the repository's TypeScript version.
+
+The existing `npm test` and `npm run lint` scripts are placeholders: the test runner and ESLint setup are not present in this checkout.
 
 ### Building the Extension
 
