@@ -1,268 +1,103 @@
 import * as vscode from 'vscode';
-import { AuthManager } from './auth/authManager';
-import { WelcomeViewProvider } from './views/welcomeView';
-import { NeonExplorerProvider } from './views/neonExplorer';
-import { createNeonApiClient } from './api/neonClient';
-import { ProjectListItem, EndpointType } from '@neondatabase/api-client';
+import { NeonApi } from './api/neonApi';
+import { NeonOAuthClient, AUTH_SCOPES } from './auth/oauthClient';
+import { SessionManager } from './auth/sessionManager';
+import { NeonAuthenticationProvider } from './auth/authenticationProvider';
+import { ProfileView } from './views/profileView';
+import { SignInCancelledError, userMessage } from './core/errors';
 
-// Status bar item for showing the current project
-let projectStatusBarItem: vscode.StatusBarItem;
-
-export function activate(context: vscode.ExtensionContext) {
-  console.log('Neon VSCode Extension is now active!');
-
-  // Initialize the auth manager
-  const authManager = AuthManager.getInstance(context);
-  
-  // Set initial authentication context
-  vscode.commands.executeCommand(
-    'setContext', 
-    'neon-vscode-extension.isAuthenticated', 
-    authManager.isAuthenticated
+export async function activate(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const sessions = new SessionManager(
+    context.secrets,
+    new NeonOAuthClient(async (url) =>
+      vscode.env.openExternal(vscode.Uri.parse(url)),
+    ),
+    new NeonApi(),
+    () =>
+      vscode.workspace
+        .getConfiguration('neon')
+        .get<string>('oauth.clientId', 'neonctl'),
   );
-
-  // Register the welcome view provider
-  const welcomeViewProvider = new WelcomeViewProvider(context);
+  const provider = new NeonAuthenticationProvider(sessions);
+  const profile = new ProfileView(sessions);
+  const view = vscode.window.createTreeView('neon.profile', {
+    treeDataProvider: profile,
+    showCollapseAll: false,
+  });
+  const setContext = () => {
+    void vscode.commands.executeCommand(
+      'setContext',
+      'neon.signedIn',
+      !!sessions.account,
+    );
+  };
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(
-      WelcomeViewProvider.viewType,
-      welcomeViewProvider,
-      {
-        webviewOptions: {
-          retainContextWhenHidden: true
-        }
-      }
-    )
+    sessions,
+    provider,
+    profile,
+    view,
+    sessions.subscribe(setContext),
+    vscode.authentication.registerAuthenticationProvider(
+      'neon',
+      'Neon',
+      provider,
+      { supportsMultipleAccounts: false },
+    ),
   );
 
-  // Create status bar item
-  projectStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  projectStatusBarItem.command = 'neon-vscode-extension.switchProject';
-  context.subscriptions.push(projectStatusBarItem);
-
-  // Register the Neon Explorer tree view
-  const neonExplorerProvider = new NeonExplorerProvider(context);
-  context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('neonExplorer', neonExplorerProvider)
-  );
-
-  // Register the sign in command
-  const signInCommand = vscode.commands.registerCommand('neon-vscode-extension.signIn', async () => {
-    try {
-      await authManager.signIn();
-      // Refresh the tree view after signing in
-      neonExplorerProvider.refresh();
-      updateStatusBar(context);
-      // Set context for command palette visibility
-      vscode.commands.executeCommand('setContext', 'neon-vscode-extension.isAuthenticated', true);
-    } catch (error) {
-      console.error('Sign in error:', error);
-    }
-  });
-
-  // Register the sign out command
-  const signOutCommand = vscode.commands.registerCommand('neon-vscode-extension.signOut', async () => {
-    try {
-      await authManager.signOut();
-      // Refresh the tree view after signing out
-      neonExplorerProvider.refresh();
-      // Clear the status bar
-      projectStatusBarItem.hide();
-      // Clear selected project
-      await context.globalState.update('neon.selectedProjectId', undefined);
-      await context.globalState.update('neon.selectedProjectName', undefined);
-      // Set context for command palette visibility
-      vscode.commands.executeCommand('setContext', 'neon-vscode-extension.isAuthenticated', false);
-    } catch (error) {
-      console.error('Sign out error:', error);
-    }
-  });
-
-  // Register refresh command
-  const refreshCommand = vscode.commands.registerCommand('neon-vscode-extension.refreshTree', () => {
-    neonExplorerProvider.refresh();
-    updateStatusBar(context);
-  });
-
-  // Register switch project command
-  const switchProjectCommand = vscode.commands.registerCommand('neon-vscode-extension.switchProject', async () => {
-    try {
-      const isAuthenticated = await authManager.isAuthenticated;
-      if (!isAuthenticated) {
-        vscode.window.showInformationMessage('Please sign in to Neon first');
-        return;
-      }
-
-      await authManager.refreshTokenIfNeeded();
-      const tokenSet = authManager.tokenSet;
-      
-      if (!tokenSet) {
-        throw new Error('No valid token available');
-      }
-      
-      // Create API client and fetch projects
-      const neonClient = createNeonApiClient(tokenSet);
-      const response = await neonClient.listProjects({});
-      
-      // Extract projects from the response data
-      const projects = response.data.projects;
-      
-      if (!projects || projects.length === 0) {
-        vscode.window.showInformationMessage('No projects found in your Neon account');
-        return;
-      }
-
-      // Create QuickPick items from projects
-      const projectItems = projects.map((project: ProjectListItem) => ({
-        label: project.name,
-        description: `ID: ${project.id}, Region: ${project.region_id}`,
-        project: project
-      }));
-
-      // Show QuickPick to select a project
-      const selectedItem = await vscode.window.showQuickPick(projectItems, {
-        placeHolder: 'Select a Neon project'
-      });
-
-      if (selectedItem) {
-        // Save the selected project to global state
-        await context.globalState.update('neon.selectedProjectId', selectedItem.project.id);
-        await context.globalState.update('neon.selectedProjectName', selectedItem.project.name);
-        
-        // Update status bar and refresh tree view
-        updateStatusBar(context);
-        neonExplorerProvider.refresh();
-        
-        vscode.window.showInformationMessage(`Switched to project: ${selectedItem.project.name}`);
-      }
-    } catch (error) {
-      console.error('Error switching project:', error);
-      vscode.window.showErrorMessage(`Failed to switch project: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  });
-
-  // Register select project from tree view command
-  const selectProjectCommand = vscode.commands.registerCommand('neon-vscode-extension.selectProject', async (projectId: string, projectName: string) => {
-    await context.globalState.update('neon.selectedProjectId', projectId);
-    await context.globalState.update('neon.selectedProjectName', projectName);
-    
-    // Update status bar and refresh tree view
-    updateStatusBar(context);
-    neonExplorerProvider.refresh();
-    
-    vscode.window.showInformationMessage(`Switched to project: ${projectName}`);
-  });
-
-  // Register create branch command
-  const createBranchCommand = vscode.commands.registerCommand('neon-vscode-extension.createBranch', async () => {
-    try {
-      const isAuthenticated = await authManager.isAuthenticated;
-      if (!isAuthenticated) {
-        vscode.window.showInformationMessage('Please sign in to Neon first');
-        return;
-      }
-
-      // Get the selected project ID
-      const projectId = context.globalState.get<string>('neon.selectedProjectId');
-      if (!projectId) {
-        vscode.window.showInformationMessage('No project selected');
-        return;
-      }
-
-      // Prompt user for branch name
-      const branchName = await vscode.window.showInputBox({
-        placeHolder: 'Enter branch name',
-        prompt: 'Enter a name for the new branch',
-        validateInput: (value) => {
-          if (!value || value.trim().length === 0) {
-            return 'Branch name cannot be empty';
+  const command = (id: string, action: () => PromiseLike<unknown>) => {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(id, async () => {
+        try {
+          return await action();
+        } catch (error) {
+          if (
+            !(error instanceof SignInCancelledError) &&
+            !(error instanceof DOMException && error.name === 'AbortError')
+          ) {
+            await vscode.window.showErrorMessage(userMessage(error));
           }
-          return null;
+          return undefined;
         }
-      });
+      }),
+    );
+  };
 
-      if (!branchName) {
-        // User cancelled the input
-        return;
-      }
-
-      // Ensure token is refreshed if needed
-      await authManager.refreshTokenIfNeeded();
-      const tokenSet = authManager.tokenSet;
-      
-      if (!tokenSet) {
-        throw new Error('No valid token available');
-      }
-      
-      // Create API client and create branch
-      const neonClient = createNeonApiClient(tokenSet);
-      
-      // Show progress indicator
-      await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `Creating branch '${branchName}'...`,
-        cancellable: false
-      }, async () => {
-        const response = await neonClient.createProjectBranch(projectId, {
-          branch: {
-            name: branchName,
-          },
-          endpoints: [
-            {
-              type: EndpointType.ReadWrite,
-              autoscaling_limit_min_cu: 0.25,
-              autoscaling_limit_max_cu: 0.25,
-              provisioner: 'k8s-neonvm',
-            },
-          ],
-        });
-
-        // Refresh the tree view to show the new branch
-        neonExplorerProvider.refresh();
-        
-        vscode.window.showInformationMessage(`Branch '${branchName}' created successfully`);
-      });
-    } catch (error) {
-      console.error('Error creating branch:', error);
-      vscode.window.showErrorMessage(`Failed to create branch: ${error instanceof Error ? error.message : String(error)}`);
-    }
+  command('neon.signIn', async () => {
+    await vscode.authentication.getSession('neon', [...AUTH_SCOPES], {
+      createIfNone: true,
+    });
+    await vscode.commands.executeCommand('neon.profile.focus');
   });
+  command('neon.signOut', () => sessions.signOut());
+  command('neon.refreshProfile', () =>
+    vscode.window.withProgress({ location: { viewId: 'neon.profile' } }, () =>
+      sessions.refreshProfile(),
+    ),
+  );
+  command('neon.showProfile', () =>
+    vscode.commands.executeCommand('neon.profile.focus'),
+  );
 
-  context.subscriptions.push(signInCommand, signOutCommand, refreshCommand, switchProjectCommand, selectProjectCommand, createBranchCommand);
-  
-  // Show the welcome view when the extension is activated
-  vscode.commands.executeCommand('neon-welcome.focus');
-  
-  // Update status bar on activation
-  updateStatusBar(context);
+  try {
+    await sessions.restore();
+  } catch (error) {
+    void vscode.window.showErrorMessage(userMessage(error));
+  }
+  setContext();
+  if (sessions.account) {
+    // Cached identity renders immediately. A failed background request leaves it intact.
+    void sessions.refreshProfile().catch(() => {
+      if (sessions.account)
+        view.message =
+          'Profile could not be refreshed. Use Refresh Profile to retry.';
+    });
+  }
+  context.subscriptions.push(
+    sessions.subscribe(() => {
+      view.message = undefined;
+    }),
+  );
 }
-
-// Function to update the status bar with the current project
-async function updateStatusBar(context: vscode.ExtensionContext) {
-  const authManager = AuthManager.getInstance(context);
-  const isAuthenticated = await authManager.isAuthenticated;
-  
-  if (!isAuthenticated) {
-    projectStatusBarItem.hide();
-    return;
-  }
-  
-  const projectName = context.globalState.get<string>('neon.selectedProjectName');
-  
-  if (projectName) {
-    projectStatusBarItem.text = `$(database) Neon: ${projectName}`;
-    projectStatusBarItem.tooltip = 'Click to switch Neon project';
-    projectStatusBarItem.show();
-  } else {
-    projectStatusBarItem.text = '$(database) Neon: No project selected';
-    projectStatusBarItem.tooltip = 'Click to select a Neon project';
-    projectStatusBarItem.show();
-  }
-}
-
-export function deactivate() {
-  // Clean up resources when the extension is deactivated
-  if (projectStatusBarItem) {
-    projectStatusBarItem.dispose();
-  }
-} 
