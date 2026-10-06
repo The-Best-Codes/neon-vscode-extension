@@ -9,6 +9,8 @@ import { SignInCancelledError, userMessage } from './core/errors';
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
+  await vscode.commands.executeCommand('setContext', 'neon.ready', false);
+  let restoring = true;
   const sessions = new SessionManager(
     context.secrets,
     new NeonOAuthClient(async (url) =>
@@ -26,8 +28,8 @@ export async function activate(
     treeDataProvider: profile,
     showCollapseAll: false,
   });
-  const setContext = () => {
-    void vscode.commands.executeCommand(
+  const setContext = async () => {
+    await vscode.commands.executeCommand(
       'setContext',
       'neon.signedIn',
       !!sessions.account,
@@ -66,6 +68,7 @@ export async function activate(
   };
 
   command('neon.signIn', async () => {
+    if (restoring) return;
     await vscode.authentication.getSession('neon', [...AUTH_SCOPES], {
       createIfNone: true,
     });
@@ -86,7 +89,9 @@ export async function activate(
   } catch (error) {
     void vscode.window.showErrorMessage(userMessage(error));
   }
-  setContext();
+  await setContext();
+  restoring = false;
+  await vscode.commands.executeCommand('setContext', 'neon.ready', true);
   if (sessions.account) {
     // Cached identity renders immediately. A failed background request leaves it intact.
     void sessions.refreshProfile().catch(() => {

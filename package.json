@@ -28,7 +28,7 @@
   "main": "./dist/extension.js",
   "activationEvents": [
     "onStartupFinished"
-    ],
+  ],
   "contributes": {
     "authentication": [
       {
@@ -83,15 +83,20 @@
     "viewsWelcome": [
       {
         "view": "neon.profile",
+        "contents": "Loading your Neon account\u2026",
+        "when": "!neon.ready"
+      },
+      {
+        "view": "neon.profile",
         "contents": "Connect your Neon account to view your profile.\n[Sign in to Neon](command:neon.signIn)",
-        "when": "!neon.signedIn"
+        "when": "neon.ready && !neon.signedIn"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "neon.signIn",
-          "when": "view == neon.profile && !neon.signedIn",
+          "when": "neon.ready && view == neon.profile && !neon.signedIn",
           "group": "navigation@1"
         },
         {
@@ -108,7 +113,7 @@
       "commandPalette": [
         {
           "command": "neon.signIn",
-          "when": "!neon.signedIn"
+          "when": "neon.ready && !neon.signedIn"
         },
         {
           "command": "neon.signOut",
