@@ -20,7 +20,7 @@ export async function activate(
     () =>
       vscode.workspace
         .getConfiguration('neon')
-        .get<string>('oauth.clientId', 'neonctl'),
+        .get<string>('oauth.clientId', 'neonvscode'),
   );
   const provider = new NeonAuthenticationProvider(sessions);
   const profile = new ProfileView(sessions);

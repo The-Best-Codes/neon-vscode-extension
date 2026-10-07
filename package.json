@@ -130,10 +130,10 @@
       "properties": {
         "neon.oauth.clientId": {
           "type": "string",
-          "default": "neonctl",
+          "default": "neonvscode",
           "scope": "application",
           "minLength": 1,
-          "description": "Registered public Neon OAuth client. The default uses the Neon CLI client for development. Sign out before changing this; production needs a dedicated Neon-approved registration supporting dynamic loopback ports."
+          "description": "Registered public Neon OAuth client. Defaults to neonvscode, the Neon VS Code extension client. Sign out before changing this; custom registrations must support dynamic loopback ports."
         }
       }
     }
