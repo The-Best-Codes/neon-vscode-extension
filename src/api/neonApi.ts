@@ -1,4 +1,9 @@
-import { ApiError, NeonError } from '../core/errors';
+import { createNeonClient, type NeonClient } from '@neon/sdk';
+import { NeonError } from '../core/errors';
+
+export type Neon = NeonClient<true>;
+
+const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface Profile {
   id: string;
@@ -34,25 +39,36 @@ export interface ProfileApi {
   getCurrentUser(accessToken: string): Promise<Profile>;
 }
 
-export class NeonApi implements ProfileApi {
-  constructor(private readonly request: typeof fetch = fetch) {}
+export const profileApi: ProfileApi = {
+  async getCurrentUser(accessToken) {
+    const neon = createNeonClient({
+      apiKey: accessToken,
+      throwOnError: true,
+      requestTimeoutMs: REQUEST_TIMEOUT_MS,
+    });
+    return parseProfile(await neon.user.me());
+  },
+};
 
-  async getCurrentUser(accessToken: string): Promise<Profile> {
-    const response = await this.request(
-      'https://console.neon.tech/api/v2/users/me',
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/json',
-        },
-        signal: AbortSignal.timeout(15_000),
-        redirect: 'error',
-      },
-    );
-    if (!response.ok) {
-      // Never surface arbitrary response bodies: they may contain credentials or PII.
-      throw new ApiError(response.status);
-    }
-    return parseProfile(await response.json());
-  }
+/**
+ * A Neon client for the signed-in account. Tokens are read per request, and a
+ * 401 forces one token refresh and retry, so callers never handle expiry.
+ */
+export function createApi(
+  accessToken: (forceRefresh?: boolean) => Promise<string>,
+): Neon {
+  const authorizedFetch: typeof fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const retry = request.clone();
+    const response = await fetch(request);
+    if (response.status !== 401) return response;
+    retry.headers.set('Authorization', `Bearer ${await accessToken(true)}`);
+    return fetch(retry);
+  };
+  return createNeonClient({
+    apiKey: () => accessToken(),
+    throwOnError: true,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+    fetch: authorizedFetch,
+  });
 }

@@ -2,7 +2,16 @@ import * as oidc from 'openid-client';
 import { NeonError, SessionExpiredError } from '../core/errors';
 import { startLoopback } from './loopback';
 
-export const AUTH_SCOPES = ['openid', 'offline', 'offline_access'] as const;
+export const AUTH_SCOPES = [
+  'openid',
+  'offline',
+  'offline_access',
+  'urn:neoncloud:projects:create',
+  'urn:neoncloud:projects:read',
+  'urn:neoncloud:projects:update',
+  'urn:neoncloud:projects:delete',
+  'urn:neoncloud:orgs:read',
+] as const;
 
 export interface Tokens {
   accessToken: string;

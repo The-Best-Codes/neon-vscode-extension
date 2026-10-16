@@ -69,11 +69,19 @@ export async function startLoopback(
         .end('Invalid sign-in state. Return to VS Code and try again.');
       return;
     }
-    if (url.searchParams.has('error')) {
+    const error = url.searchParams.get('error');
+    if (error) {
       reply
         .writeHead(400)
         .end('Sign-in was not completed. You can return to VS Code.');
-      fail(new SignInCancelledError());
+      // Declining consent is a cancellation. Anything else is a client misconfiguration.
+      fail(
+        error === 'access_denied'
+          ? new SignInCancelledError()
+          : new NeonError(
+              `Neon rejected the sign-in request (${error}). Check the Neon OAuth client ID setting.`,
+            ),
+      );
       return;
     }
     if (

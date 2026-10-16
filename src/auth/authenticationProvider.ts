@@ -71,7 +71,7 @@ export class NeonAuthenticationProvider
       )
     ) {
       throw new Error(
-        'This Neon extension currently supports profile sign-in only.',
+        'The Neon extension does not support the requested scopes.',
       );
     }
     await vscode.window.withProgress(

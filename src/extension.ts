@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
-import { NeonApi } from './api/neonApi';
+import { createApi, profileApi } from './api/neonApi';
 import { NeonOAuthClient, AUTH_SCOPES } from './auth/oauthClient';
 import { SessionManager } from './auth/sessionManager';
 import { NeonAuthenticationProvider } from './auth/authenticationProvider';
-import { ProfileView } from './views/profileView';
-import { SignInCancelledError, userMessage } from './core/errors';
+import { ProjectsTree } from './views/projectsTree';
+import { projectCommands } from './commands';
+import { isCancellation, userMessage } from './core/errors';
 
 export async function activate(
   context: vscode.ExtensionContext,
@@ -16,19 +17,28 @@ export async function activate(
     new NeonOAuthClient(async (url) =>
       vscode.env.openExternal(vscode.Uri.parse(url)),
     ),
-    new NeonApi(),
+    profileApi,
     () =>
       vscode.workspace
         .getConfiguration('neon')
-        .get<string>('oauth.clientId', 'neonvscode'),
+        .get<string>('oauth.clientId', 'neonctl'),
   );
+  const neon = createApi((forceRefresh) => sessions.accessToken(forceRefresh));
   const provider = new NeonAuthenticationProvider(sessions);
-  const profile = new ProfileView(sessions);
-  const view = vscode.window.createTreeView('neon.profile', {
-    treeDataProvider: profile,
-    showCollapseAll: false,
+  const tree = new ProjectsTree(neon, () => !!sessions.account);
+  const view = vscode.window.createTreeView('neon.projects', {
+    treeDataProvider: tree,
+    showCollapseAll: true,
   });
-  const setContext = async () => {
+  let accountId: string | undefined;
+  const onAccountChanged = async () => {
+    const account = sessions.account;
+    view.description = account?.profile.email || undefined;
+    // Token and profile refreshes also notify. Only a different account needs a reload.
+    if (account?.id !== accountId) {
+      accountId = account?.id;
+      tree.refresh();
+    }
     await vscode.commands.executeCommand(
       'setContext',
       'neon.signedIn',
@@ -38,9 +48,9 @@ export async function activate(
   context.subscriptions.push(
     sessions,
     provider,
-    profile,
+    tree,
     view,
-    sessions.subscribe(setContext),
+    sessions.subscribe(() => void onAccountChanged()),
     vscode.authentication.registerAuthenticationProvider(
       'neon',
       'Neon',
@@ -49,18 +59,17 @@ export async function activate(
     ),
   );
 
-  const command = (id: string, action: () => PromiseLike<unknown>) => {
+  const command = (
+    id: string,
+    action: (...args: never[]) => PromiseLike<unknown> | unknown,
+  ) => {
     context.subscriptions.push(
-      vscode.commands.registerCommand(id, async () => {
+      vscode.commands.registerCommand(id, async (...args: never[]) => {
         try {
-          return await action();
+          return await action(...args);
         } catch (error) {
-          if (
-            !(error instanceof SignInCancelledError) &&
-            !(error instanceof DOMException && error.name === 'AbortError')
-          ) {
-            await vscode.window.showErrorMessage(userMessage(error));
-          }
+          if (!isCancellation(error))
+            void vscode.window.showErrorMessage(userMessage(error));
           return undefined;
         }
       }),
@@ -72,37 +81,20 @@ export async function activate(
     await vscode.authentication.getSession('neon', [...AUTH_SCOPES], {
       createIfNone: true,
     });
-    await vscode.commands.executeCommand('neon.profile.focus');
+    await vscode.commands.executeCommand('neon.projects.focus');
   });
   command('neon.signOut', () => sessions.signOut());
-  command('neon.refreshProfile', () =>
-    vscode.window.withProgress({ location: { viewId: 'neon.profile' } }, () =>
-      sessions.refreshProfile(),
-    ),
-  );
-  command('neon.showProfile', () =>
-    vscode.commands.executeCommand('neon.profile.focus'),
-  );
+  for (const [id, action] of Object.entries(projectCommands(neon, tree)))
+    command(id, action);
 
   try {
     await sessions.restore();
   } catch (error) {
     void vscode.window.showErrorMessage(userMessage(error));
   }
-  await setContext();
+  await onAccountChanged();
   restoring = false;
   await vscode.commands.executeCommand('setContext', 'neon.ready', true);
-  if (sessions.account) {
-    // Cached identity renders immediately. A failed background request leaves it intact.
-    void sessions.refreshProfile().catch(() => {
-      if (sessions.account)
-        view.message =
-          'Profile could not be refreshed. Use Refresh Profile to retry.';
-    });
-  }
-  context.subscriptions.push(
-    sessions.subscribe(() => {
-      view.message = undefined;
-    }),
-  );
+  // The cached profile renders immediately. Refresh it quietly in the background.
+  if (sessions.account) void sessions.refreshProfile().catch(() => undefined);
 }

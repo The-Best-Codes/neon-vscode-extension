@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
-  ApiError,
+  isUnauthorized,
   NeonError,
   SessionExpiredError,
   SignInCancelledError,
@@ -8,7 +8,9 @@ import {
 import { parseProfile, type Profile, type ProfileApi } from '../api/neonApi';
 import { type OAuthClient, type Tokens } from './oauthClient';
 
-export const SESSION_KEY = 'neon.session.v1';
+export const SESSION_KEY = 'neon.session.v2';
+// v1 sessions were issued without project scopes and can't call the projects API.
+const LEGACY_SESSION_KEY = 'neon.session.v1';
 
 export interface SecretStore {
   get(key: string): PromiseLike<string | undefined>;
@@ -101,6 +103,7 @@ export class SessionManager {
   async restore(): Promise<void> {
     const revision = this.revision;
     await this.serialize(async () => {
+      await this.secrets.delete(LEGACY_SESSION_KEY);
       const raw = await this.secrets.get(SESSION_KEY);
       if (!raw || revision !== this.revision) return;
       try {
@@ -207,15 +210,11 @@ export class SessionManager {
     try {
       profile = await this.api.getCurrentUser(await this.accessToken());
     } catch (error) {
-      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      if (!isUnauthorized(error)) throw error;
       try {
         profile = await this.api.getCurrentUser(await this.accessToken(true));
       } catch (retryError) {
-        if (
-          retryError instanceof ApiError &&
-          retryError.status === 401 &&
-          revision === this.revision
-        ) {
+        if (isUnauthorized(retryError) && revision === this.revision) {
           await this.signOut(false);
           throw new SessionExpiredError();
         }
