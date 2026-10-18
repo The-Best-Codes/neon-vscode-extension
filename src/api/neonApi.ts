@@ -22,7 +22,6 @@ export function parseProfile(value: unknown): Profile {
   }
   const text = (key: string) =>
     typeof user[key] === 'string' ? user[key].trim() : '';
-  // Neon has deprecated login in favor of email. Keep it only as a display fallback.
   const email = text('email') || text('login');
   return {
     id: user.id,
@@ -50,10 +49,6 @@ export const profileApi: ProfileApi = {
   },
 };
 
-/**
- * A Neon client for the signed-in account. Tokens are read per request, and a
- * 401 forces one token refresh and retry, so callers never handle expiry.
- */
 export function createApi(
   accessToken: (forceRefresh?: boolean) => Promise<string>,
 ): Neon {

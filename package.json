@@ -117,6 +117,24 @@
         "icon": "$(link-external)"
       },
       {
+        "command": "neon.selectWorkspaceProject",
+        "title": "Select Workspace Project…",
+        "category": "Neon",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "neon.setWorkspaceProject",
+        "title": "Set as Workspace Project",
+        "category": "Neon",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "neon.unlinkWorkspaceProject",
+        "title": "Unlink Workspace Project",
+        "category": "Neon",
+        "icon": "$(pinned)"
+      },
+      {
         "command": "neon.copyId",
         "title": "Copy ID",
         "category": "Neon"
@@ -198,37 +216,47 @@
         },
         {
           "command": "neon.createBranch",
-          "when": "view == neon.projects && viewItem == project",
+          "when": "view == neon.projects && viewItem =~ /^project/",
           "group": "inline@1"
         },
         {
           "command": "neon.openInConsole",
-          "when": "view == neon.projects && viewItem == project",
+          "when": "view == neon.projects && viewItem =~ /^project/",
           "group": "inline@2"
         },
         {
           "command": "neon.createBranch",
-          "when": "view == neon.projects && viewItem == project",
+          "when": "view == neon.projects && viewItem =~ /^project/",
           "group": "1_create@1"
         },
         {
           "command": "neon.openInConsole",
-          "when": "view == neon.projects && viewItem == project",
+          "when": "view == neon.projects && viewItem =~ /^project/",
           "group": "2_open@1"
         },
         {
+          "command": "neon.setWorkspaceProject",
+          "when": "view == neon.projects && viewItem == project && workspaceFolderCount > 0",
+          "group": "2_open@2"
+        },
+        {
+          "command": "neon.unlinkWorkspaceProject",
+          "when": "view == neon.projects && viewItem == project.linked",
+          "group": "2_open@2"
+        },
+        {
           "command": "neon.copyId",
-          "when": "view == neon.projects && viewItem == project",
+          "when": "view == neon.projects && viewItem =~ /^project/",
           "group": "3_copy@1"
         },
         {
           "command": "neon.renameProject",
-          "when": "view == neon.projects && viewItem == project",
+          "when": "view == neon.projects && viewItem =~ /^project/",
           "group": "4_edit@1"
         },
         {
           "command": "neon.deleteProject",
-          "when": "view == neon.projects && viewItem == project",
+          "when": "view == neon.projects && viewItem =~ /^project/",
           "group": "9_delete@1"
         },
         {
@@ -342,6 +370,18 @@
           "when": "neon.signedIn"
         },
         {
+          "command": "neon.selectWorkspaceProject",
+          "when": "neon.signedIn && workspaceFolderCount > 0"
+        },
+        {
+          "command": "neon.unlinkWorkspaceProject",
+          "when": "neon.signedIn && neon.workspaceProjectLinked"
+        },
+        {
+          "command": "neon.setWorkspaceProject",
+          "when": "false"
+        },
+        {
           "command": "neon.renameProject",
           "when": "false"
         },
@@ -389,6 +429,12 @@
           "type": "boolean",
           "default": true,
           "description": "Copy pooled (PgBouncer) connection strings. Turn off for migrations and tools that need a direct connection."
+        },
+        "neon.workspaceProject.detectFromEnv": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "markdownDescription": "Link the workspace to the Neon project that connection strings in its `.env` files point at. Only the compute host is sent to Neon to find the project. A project you select yourself always takes priority."
         }
       }
     }

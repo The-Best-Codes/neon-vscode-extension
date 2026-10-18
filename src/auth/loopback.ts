@@ -8,7 +8,6 @@ export interface Loopback {
   close(): void;
 }
 
-/** Receive one OAuth response on a random port bound only to loopback. */
 export async function startLoopback(
   state: string,
   signal: AbortSignal,
@@ -21,7 +20,6 @@ export async function startLoopback(
     resolve = yes;
     reject = no;
   });
-  // The browser can fail to open before the caller begins awaiting the response.
   void response.catch(() => undefined);
   let settled = false;
   let timer: NodeJS.Timeout | undefined;
@@ -63,7 +61,6 @@ export async function startLoopback(
       url.searchParams.getAll('state').length !== 1 ||
       url.searchParams.get('state') !== state
     ) {
-      // Ignore unsolicited callbacks rather than letting them cancel a real login.
       reply
         .writeHead(400)
         .end('Invalid sign-in state. Return to VS Code and try again.');
@@ -74,7 +71,6 @@ export async function startLoopback(
       reply
         .writeHead(400)
         .end('Sign-in was not completed. You can return to VS Code.');
-      // Declining consent is a cancellation. Anything else is a client misconfiguration.
       fail(
         error === 'access_denied'
           ? new SignInCancelledError()
@@ -93,7 +89,6 @@ export async function startLoopback(
       return;
     }
     settled = true;
-    // This acknowledges the redirect; token exchange and profile loading happen in VS Code.
     reply.end(
       'Authorization received. Return to VS Code to finish signing in.',
     );

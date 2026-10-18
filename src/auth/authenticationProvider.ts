@@ -43,9 +43,7 @@ export class NeonAuthenticationProvider
         removed: previous && !current ? [previous] : [],
         changed: current && previous ? [current] : [],
       });
-    } catch {
-      // A temporary refresh failure keeps the saved session available for a retry.
-    }
+    } catch {}
   }
 
   async getSessions(

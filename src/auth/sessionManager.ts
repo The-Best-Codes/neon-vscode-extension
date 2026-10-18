@@ -9,7 +9,6 @@ import { parseProfile, type Profile, type ProfileApi } from '../api/neonApi';
 import { type OAuthClient, type Tokens } from './oauthClient';
 
 export const SESSION_KEY = 'neon.session.v2';
-// v1 sessions were issued without project scopes and can't call the projects API.
 const LEGACY_SESSION_KEY = 'neon.session.v1';
 
 export interface SecretStore {
@@ -49,7 +48,6 @@ function parseSession(raw: string): StoredSession {
   ) {
     throw new Error('Invalid stored session');
   }
-  // Validate the cached display model separately from the API response shape.
   const validated = parseProfile(session.profile);
   session.profile = {
     ...validated,
@@ -61,7 +59,6 @@ function parseSession(raw: string): StoredSession {
   return session;
 }
 
-/** Owns one account. Tokens stay behind this boundary and in SecretStorage. */
 export class SessionManager {
   private session?: StoredSession;
   private revision = 0;
@@ -130,7 +127,6 @@ export class SessionManager {
       await this.secrets.store(SESSION_KEY, JSON.stringify(session));
       if (revision !== this.revision) throw new SignInCancelledError();
       if (signal?.aborted) {
-        // Cancellation can arrive while SecretStorage is writing. Roll back that write.
         if (previous)
           await this.secrets.store(SESSION_KEY, JSON.stringify(previous));
         else await this.secrets.delete(SESSION_KEY);

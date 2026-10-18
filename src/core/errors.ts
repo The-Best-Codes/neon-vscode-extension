@@ -18,7 +18,6 @@ export function isUnauthorized(error: unknown): boolean {
   return isNeonError(error) && error.kind === 'auth' && error.status === 401;
 }
 
-/** Errors the user caused by dismissing a prompt or progress notification. */
 export function isCancellation(error: unknown): boolean {
   return (
     error instanceof SignInCancelledError ||
@@ -45,7 +44,6 @@ export function userMessage(error: unknown): string {
         ? 'Neon is still working on this. Refresh in a moment to see the result.'
         : 'Neon took too long to respond. Try again.';
     default:
-      // API errors carry Neon's own user-facing message, e.g. "branch limit exceeded".
       return error.message;
   }
 }

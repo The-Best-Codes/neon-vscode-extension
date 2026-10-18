@@ -9,10 +9,10 @@ import type {
 } from '@neon/sdk';
 import type { Neon } from '../api/neonApi';
 import { isCancellation, userMessage } from '../core/errors';
+import type { ProjectLink } from '../workspace/workspaceProject';
 
 export type OrgNode = { kind: 'org'; org: Organization };
 export type ProjectNode = { kind: 'project'; project: ProjectListItem };
-/** Children only need the project's identity, so nodes can be built from any project shape. */
 type ProjectRef = Pick<ProjectListItem, 'id' | 'name'>;
 export type BranchNode = {
   kind: 'branch';
@@ -62,12 +62,15 @@ export class ProjectsTree
 {
   private readonly events = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.events.event;
-  /** Rendered project nodes, so mutations can reload just the project they touched. */
+  private readonly loaded = new vscode.EventEmitter<void>();
+  readonly onDidLoadProjects = this.loaded.event;
   private readonly projects = new Map<string, ProjectNode>();
+  private readonly parents = new Map<string, OrgNode | undefined>();
 
   constructor(
     private readonly neon: Neon,
     private readonly signedIn: () => boolean,
+    private readonly linked: () => ProjectLink | undefined,
   ) {}
 
   refresh(node?: Node): void {
@@ -76,6 +79,16 @@ export class ProjectsTree
 
   refreshProject(projectId: string): void {
     this.refresh(this.projects.get(projectId));
+  }
+
+  projectNode(projectId: string): ProjectNode | undefined {
+    return this.projects.get(projectId);
+  }
+
+  getParent(node: Node): Node | undefined {
+    return node.kind === 'project'
+      ? this.parents.get(node.project.id)
+      : undefined;
   }
 
   async getChildren(node?: Node): Promise<Node[]> {
@@ -106,8 +119,7 @@ export class ProjectsTree
   private async load(node?: Node): Promise<Node[]> {
     if (!node) {
       const orgs = await this.neon.user.organizations();
-      // Most people belong to one organization. Skip the extra level for them.
-      if (orgs.length === 1) return this.loadProjects(orgs[0]!);
+      if (orgs.length === 1) return this.loadProjects(orgs[0]!, undefined);
       return byName(orgs, (org) => org.name).map((org) => ({
         kind: 'org',
         org,
@@ -115,7 +127,7 @@ export class ProjectsTree
     }
     switch (node.kind) {
       case 'org': {
-        const projects = await this.loadProjects(node.org);
+        const projects = await this.loadProjects(node.org, node);
         return projects.length
           ? projects
           : [
@@ -194,23 +206,37 @@ export class ProjectsTree
     }
   }
 
-  private async loadProjects(org: Organization): Promise<Node[]> {
+  private async loadProjects(
+    org: Organization,
+    parent: OrgNode | undefined,
+  ): Promise<Node[]> {
     const projects = await this.neon.projects.list({ org_id: org.id }).all();
-    return byName(projects, (p) => p.name).map((project) => {
-      const node: ProjectNode = { kind: 'project', project };
-      this.projects.set(project.id, node);
-      return node;
-    });
+    const linked = this.linked()?.projectId;
+    const nodes = byName(projects, (p) => p.name)
+      .sort((a, b) => Number(b.id === linked) - Number(a.id === linked))
+      .map((project) => {
+        const node: ProjectNode = { kind: 'project', project };
+        this.projects.set(project.id, node);
+        this.parents.set(project.id, parent);
+        return node;
+      });
+    queueMicrotask(() => this.loaded.fire());
+    return nodes;
   }
 
   getTreeItem(node: Node): vscode.TreeItem {
+    const linked = this.linked();
+    const expanded =
+      (node.kind === 'project' && node.project.id === linked?.projectId) ||
+      (node.kind === 'org' && node.org.id === linked?.orgId);
     const item = new vscode.TreeItem(
       label(node),
-      collapsible(node)
-        ? vscode.TreeItemCollapsibleState.Collapsed
-        : vscode.TreeItemCollapsibleState.None,
+      !collapsible(node)
+        ? vscode.TreeItemCollapsibleState.None
+        : expanded
+          ? vscode.TreeItemCollapsibleState.Expanded
+          : vscode.TreeItemCollapsibleState.Collapsed,
     );
-    // Stable ids keep expansion state across refreshes.
     item.id = key(node);
     switch (node.kind) {
       case 'org':
@@ -220,9 +246,19 @@ export class ProjectsTree
         break;
       case 'project': {
         const { project } = node;
-        item.iconPath = new vscode.ThemeIcon('project');
-        item.description = `${region(project.region_id)} · Postgres ${project.pg_version}`;
-        item.contextValue = 'project';
+        const isLinked = project.id === linked?.projectId;
+        item.iconPath = new vscode.ThemeIcon(
+          'project',
+          isLinked ? new vscode.ThemeColor('charts.blue') : undefined,
+        );
+        item.description = [
+          isLinked && 'workspace',
+          region(project.region_id),
+          `Postgres ${project.pg_version}`,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        item.contextValue = isLinked ? 'project.linked' : 'project';
         item.tooltip = tooltip(project.name, [
           ['ID', project.id],
           ['Region', project.region_id],
@@ -321,6 +357,7 @@ export class ProjectsTree
 
   dispose(): void {
     this.events.dispose();
+    this.loaded.dispose();
   }
 }
 
@@ -392,7 +429,6 @@ function computeState(endpoint: Endpoint): string {
       : 'Active';
 }
 
-/** `aws-us-east-2` → `AWS us-east-2` */
 export function region(regionId: string): string {
   const [provider = '', ...rest] = regionId.split('-');
   const name =

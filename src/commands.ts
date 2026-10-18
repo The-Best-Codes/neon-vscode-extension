@@ -8,6 +8,10 @@ import type {
 import type { Neon } from './api/neonApi';
 import { NeonError } from './core/errors';
 import {
+  detectFromEnvEnabled,
+  type WorkspaceProject,
+} from './workspace/workspaceProject';
+import {
   region,
   type BranchNode,
   type DatabaseNode,
@@ -20,8 +24,11 @@ import {
 
 const CONSOLE_URL = 'https://console.neon.tech/app/projects';
 
-/** Tree commands. Each accepts the clicked node, or prompts when run from the Command Palette. */
-export function projectCommands(neon: Neon, tree: ProjectsTree) {
+export function projectCommands(
+  neon: Neon,
+  tree: ProjectsTree,
+  workspace: WorkspaceProject,
+) {
   const pickOrg = async (): Promise<Organization | undefined> => {
     const orgs = await neon.user.organizations();
     if (orgs.length <= 1) return orgs[0];
@@ -33,32 +40,54 @@ export function projectCommands(neon: Neon, tree: ProjectsTree) {
     )?.org;
   };
 
-  const pickProject = async (): Promise<ProjectListItem | undefined> => {
-    const items = (async () => {
-      const orgs = await neon.user.organizations();
-      const groups = await Promise.all(
-        orgs.map(async (org) => ({
-          org,
-          projects: await neon.projects.list({ org_id: org.id }).all(),
-        })),
-      );
-      return groups.flatMap(({ org, projects }) => [
-        ...(orgs.length > 1
-          ? [{ label: org.name, kind: vscode.QuickPickItemKind.Separator }]
-          : []),
-        ...projects.map((project) => ({
-          label: project.name,
-          description: region(project.region_id),
-          project,
-        })),
-      ]);
-    })();
-    const picked = await vscode.window.showQuickPick(items, {
-      title: 'Select a project',
-      matchOnDescription: true,
+  type ProjectItem = vscode.QuickPickItem & { project?: ProjectListItem };
+
+  const projectItems = async (): Promise<ProjectItem[]> => {
+    const linked = workspace.project?.projectId;
+    const orgs = await neon.user.organizations();
+    const groups = await Promise.all(
+      orgs.map(async (org) => ({
+        org,
+        projects: await neon.projects.list({ org_id: org.id }).all(),
+      })),
+    );
+    const linkedProject = groups
+      .flatMap((g) => g.projects)
+      .find((p) => p.id === linked);
+    const item = (project: ProjectListItem): ProjectItem => ({
+      label: project.name,
+      description: region(project.region_id),
+      project,
     });
-    return picked && 'project' in picked ? picked.project : undefined;
+    return [
+      ...(linkedProject
+        ? [
+            {
+              label: 'Workspace project',
+              kind: vscode.QuickPickItemKind.Separator,
+            },
+            { ...item(linkedProject), iconPath: new vscode.ThemeIcon('pin') },
+          ]
+        : []),
+      ...groups.flatMap(({ org, projects }) => {
+        const rest = projects.filter((p) => p.id !== linked);
+        return [
+          ...((orgs.length > 1 || linkedProject) && rest.length
+            ? [{ label: org.name, kind: vscode.QuickPickItemKind.Separator }]
+            : []),
+          ...rest.map(item),
+        ];
+      }),
+    ];
   };
+
+  const pickProject = async (): Promise<ProjectListItem | undefined> =>
+    (
+      await vscode.window.showQuickPick(projectItems(), {
+        title: 'Select a project',
+        matchOnDescription: true,
+      })
+    )?.project;
 
   const pickBranch = async (
     project: BranchNode['project'],
@@ -202,6 +231,7 @@ export function projectCommands(neon: Neon, tree: ProjectsTree) {
       });
       if (!name?.trim() || name.trim() === project.name) return;
       await neon.projects.update({ projectId: project.id, name: name.trim() });
+      await workspace.renamed(project.id, name.trim());
       tree.refresh();
     },
 
@@ -223,6 +253,7 @@ export function projectCommands(neon: Neon, tree: ProjectsTree) {
         },
         () => neon.projects.delete({ projectId: project.id }),
       );
+      await workspace.deleted(project.id);
       tree.refresh();
     },
 
@@ -304,6 +335,52 @@ export function projectCommands(neon: Neon, tree: ProjectsTree) {
     },
 
     'neon.copyConnectionString': copyConnectionString,
+
+    'neon.selectWorkspaceProject': async () => {
+      type Item = ProjectItem & { action?: 'unlink' | 'detect' };
+      const linked = workspace.project;
+      const actions: Item[] = [
+        ...(workspace.detectionOverridden && detectFromEnvEnabled()
+          ? [
+              {
+                label: '$(search) Detect from .env files',
+                description: 'Follow the connection strings in this workspace',
+                action: 'detect' as const,
+              },
+            ]
+          : []),
+        ...(linked
+          ? [
+              {
+                label: '$(close) Unlink workspace',
+                description: linked.name,
+                action: 'unlink' as const,
+              },
+            ]
+          : []),
+      ];
+      const picked = await vscode.window.showQuickPick<Item>(
+        projectItems().then((items) => [...actions, ...items]),
+        {
+          title: 'Select the workspace project',
+          placeHolder: 'The project this workspace works with',
+          matchOnDescription: true,
+        },
+      );
+      if (picked?.action === 'unlink') await workspace.unlink();
+      else if (picked?.action === 'detect') {
+        await workspace.useDetection();
+        if (!workspace.project)
+          void vscode.window.showInformationMessage(
+            'No connection string in this workspace’s .env files points at one of your Neon projects.',
+          );
+      } else if (picked?.project) await workspace.link(picked.project);
+    },
+
+    'neon.setWorkspaceProject': ({ project }: ProjectNode) =>
+      workspace.link(project),
+
+    'neon.unlinkWorkspaceProject': () => workspace.unlink(),
 
     'neon.startCompute': ({ project, endpoint }: EndpointNode) =>
       vscode.window.withProgress(
