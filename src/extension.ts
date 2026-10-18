@@ -35,7 +35,7 @@ export async function activate(
   const workspace = new WorkspaceProject(
     context.workspaceState,
     neon,
-    signedIn,
+    () => sessions.account?.profile.id,
   );
   const tree = new ProjectsTree(
     neon,
@@ -74,10 +74,10 @@ export async function activate(
     status.update();
     const changed = account?.id !== accountId;
     accountId = account?.id;
-    // Switch the welcome content before the tree empties or reloads, so it
-    // never shows the previous account's state.
     await setContext('neon.signedIn', !!account);
     if (changed) {
+      linkedId = pendingReveal = workspace.project?.projectId;
+      void setContext('neon.workspaceProjectLinked', !!linkedId);
       tree.refresh();
       void workspace.detect();
     }

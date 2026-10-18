@@ -18,7 +18,14 @@ export function isUnauthorized(error: unknown): boolean {
   return isNeonError(error) && error.kind === 'auth' && error.status === 401;
 }
 
+function unwrap(error: unknown): unknown {
+  return isNeonError(error) && error.cause instanceof NeonError
+    ? error.cause
+    : error;
+}
+
 export function isCancellation(error: unknown): boolean {
+  error = unwrap(error);
   return (
     error instanceof SignInCancelledError ||
     (isNeonError(error) && error.kind === 'aborted') ||
@@ -27,6 +34,7 @@ export function isCancellation(error: unknown): boolean {
 }
 
 export function userMessage(error: unknown): string {
+  error = unwrap(error);
   if (error instanceof NeonError) return error.message;
   if (!isNeonError(error))
     return 'Neon could not complete the request. Check your connection and try again.';

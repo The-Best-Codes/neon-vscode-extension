@@ -38,10 +38,11 @@ export class NeonAuthenticationProvider
       const current = await this.readSession();
       const previous = this.previous;
       this.previous = current;
+      const same = !!current && current.id === previous?.id;
       this.events.fire({
-        added: current && !previous ? [current] : [],
-        removed: previous && !current ? [previous] : [],
-        changed: current && previous ? [current] : [],
+        added: current && !same ? [current] : [],
+        removed: previous && !same ? [previous] : [],
+        changed: current && same ? [current] : [],
       });
     } catch {}
   }

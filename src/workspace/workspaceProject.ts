@@ -9,9 +9,10 @@ export interface ProjectLink {
 }
 
 type State =
-  | { source: 'manual'; project?: ProjectLink }
+  | { source: 'manual'; project?: ProjectLink; accountId?: string }
   | {
       source: 'env';
+      accountId?: string;
       project: ProjectLink;
       endpointId: string;
       envFile: string;
@@ -39,7 +40,7 @@ export class WorkspaceProject implements vscode.Disposable {
   constructor(
     private readonly memento: vscode.Memento,
     private readonly neon: Neon,
-    private readonly signedIn: () => boolean,
+    private readonly accountId: () => string | undefined,
   ) {
     const watcher = vscode.workspace.createFileSystemWatcher(ENV_GLOB);
     const scheduleDetect = () => {
@@ -112,7 +113,7 @@ export class WorkspaceProject implements vscode.Disposable {
       if (state) await this.save(undefined);
       return;
     }
-    if (!this.signedIn()) return;
+    if (!this.accountId()) return;
     try {
       const found = await findEndpoints();
       if (generation !== this.generation) return;
@@ -147,6 +148,7 @@ export class WorkspaceProject implements vscode.Disposable {
     ).flat();
     const owners = new Map<string, ProjectListItem>();
     const checked = new Set<string>();
+    let failed = false;
     for (const endpoint of found) {
       const inRegion = (p: ProjectListItem) =>
         Number(p.region_id === endpoint.regionId);
@@ -161,7 +163,10 @@ export class WorkspaceProject implements vscode.Disposable {
             checked.add(project.id);
             const endpoints = await this.neon.postgres.endpoints
               .list({ projectId: project.id })
-              .catch(() => []);
+              .catch(() => {
+                failed = true;
+                return [];
+              });
             for (const e of endpoints) owners.set(e.id, project);
           }),
         );
@@ -169,15 +174,24 @@ export class WorkspaceProject implements vscode.Disposable {
       const project = owners.get(endpoint.endpointId);
       if (project) return { ...endpoint, project };
     }
+    if (failed) throw new Error('Some projects could not be checked');
     return undefined;
   }
 
   private get state(): State | undefined {
-    return this.memento.get<State>(STATE_KEY);
+    const state = this.memento.get<State>(STATE_KEY);
+    const accountId = this.accountId();
+    if (state?.accountId && accountId && state.accountId !== accountId)
+      return undefined;
+    return state;
   }
 
   private async save(state: State | undefined): Promise<void> {
-    await this.memento.update(STATE_KEY, state);
+    this.generation++;
+    await this.memento.update(
+      STATE_KEY,
+      state && { ...state, accountId: this.accountId() },
+    );
     this.events.fire();
   }
 
@@ -232,8 +246,8 @@ function envFileRank(path: string): number {
   ];
   const known = order.indexOf(name);
   const template = /\.(example|sample|template|dist)$/.test(name);
-  const rank = known >= 0 ? known : template ? 20 : 10;
-  return (segments.length - 1) * 100 + rank;
+  const rank = known >= 0 ? known : 10;
+  return (template ? 1_000_000 : 0) + (segments.length - 1) * 100 + rank;
 }
 
 export function parseNeonHosts(
@@ -241,10 +255,11 @@ export function parseNeonHosts(
 ): { endpointId: string; regionId?: string }[] {
   const found: { endpointId: string; regionId?: string }[] = [];
   const host =
-    /\b(ep-[a-z0-9-]+?)(?:-pooler)?\.((?:[a-z0-9-]+\.)*)neon\.tech\b/gi;
+    /\b(ep-[a-z0-9-]+?)(?:-pooler)?\.((?:[a-z0-9-]+\.)*)neon\.tech(?![\w-]|\.[\w-])/gi;
   for (const line of text.split(/\r?\n/)) {
     if (line.trimStart().startsWith('#')) continue;
-    for (const [, endpointId = '', domain = ''] of line.matchAll(host)) {
+    const value = line.replace(/\s#.*$/, '');
+    for (const [, endpointId = '', domain = ''] of value.matchAll(host)) {
       const labels = domain.split('.').filter(Boolean);
       const provider = labels.at(-1);
       const region = labels.at(-2);

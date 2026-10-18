@@ -93,7 +93,6 @@ export class ProjectsTree
   }
 
   async getChildren(node?: Node): Promise<Node[]> {
-    // Keep the view loading until the saved session is known.
     await this.restored;
     if (!this.signedIn()) return [];
     try {
@@ -120,8 +119,6 @@ export class ProjectsTree
   }
 
   private async load(node?: Node): Promise<Node[]> {
-    // An empty result is shown as a row rather than a welcome view, so the
-    // view never shows "no projects" while it is still loading.
     if (!node) {
       const orgs = await this.neon.user.organizations();
       if (orgs.length > 1)
@@ -421,7 +418,7 @@ function collapsible(node: Node): boolean {
   );
 }
 
-function byName<T>(items: T[], name: (item: T) => string): T[] {
+export function byName<T>(items: T[], name: (item: T) => string): T[] {
   return items.sort((a, b) => name(a).localeCompare(name(b)));
 }
 

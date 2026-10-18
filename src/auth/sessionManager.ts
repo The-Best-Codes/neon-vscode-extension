@@ -63,7 +63,7 @@ export class SessionManager {
   private session?: StoredSession;
   private revision = 0;
   private writes: Promise<void> = Promise.resolve();
-  private refreshFlight?: Promise<string>;
+  private refreshFlight?: { revision: number; token: Promise<string> };
   private signInFlight?: Promise<AccountSession>;
   private signInAbort?: AbortController;
   private readonly listeners = new Set<() => void>();
@@ -100,7 +100,9 @@ export class SessionManager {
   async restore(): Promise<void> {
     const revision = this.revision;
     await this.serialize(async () => {
-      await this.secrets.delete(LEGACY_SESSION_KEY);
+      await Promise.resolve(this.secrets.delete(LEGACY_SESSION_KEY)).catch(
+        () => undefined,
+      );
       const raw = await this.secrets.get(SESSION_KEY);
       if (!raw || revision !== this.revision) return;
       try {
@@ -116,7 +118,7 @@ export class SessionManager {
   }
 
   private save(
-    session: StoredSession,
+    next: StoredSession | ((current: StoredSession) => StoredSession),
     revision: number,
     signal?: AbortSignal,
   ): Promise<void> {
@@ -124,6 +126,10 @@ export class SessionManager {
       if (revision !== this.revision || signal?.aborted)
         throw new SignInCancelledError();
       const previous = this.session;
+      if (typeof next === 'function' && !previous)
+        throw new SignInCancelledError();
+      const session =
+        typeof next === 'function' ? next(previous as StoredSession) : next;
       await this.secrets.store(SESSION_KEY, JSON.stringify(session));
       if (revision !== this.revision) throw new SignInCancelledError();
       if (signal?.aborted) {
@@ -151,9 +157,16 @@ export class SessionManager {
         throw new NeonError(
           'Set a registered Neon OAuth client ID in Settings.',
         );
-      const tokens = await this.oauth.authorize(clientId, abort.signal);
+      const cancelled = (error: unknown) => {
+        throw abort.signal.aborted ? new SignInCancelledError() : error;
+      };
+      const tokens = await this.oauth
+        .authorize(clientId, abort.signal)
+        .catch(cancelled);
       if (abort.signal.aborted) throw new SignInCancelledError();
-      const profile = await this.api.getCurrentUser(tokens.accessToken);
+      const profile = await this.api
+        .getCurrentUser(tokens.accessToken)
+        .catch(cancelled);
       if (abort.signal.aborted) throw new SignInCancelledError();
       const session: StoredSession = {
         version: 1,
@@ -177,9 +190,10 @@ export class SessionManager {
     if (!session) throw new SessionExpiredError();
     if (!forceRefresh && session.tokens.expiresAt > this.now() + 60_000)
       return session.tokens.accessToken;
-    if (this.refreshFlight) return this.refreshFlight;
     const revision = this.revision;
-    this.refreshFlight = (async () => {
+    if (this.refreshFlight?.revision === revision)
+      return this.refreshFlight.token;
+    const token = (async () => {
       try {
         if (!session.tokens.refreshToken) throw new SessionExpiredError();
         const tokens = await this.oauth.refresh(
@@ -187,7 +201,7 @@ export class SessionManager {
           session.tokens.refreshToken,
         );
         tokens.refreshToken ??= session.tokens.refreshToken;
-        await this.save({ ...session, tokens }, revision);
+        await this.save((current) => ({ ...current, tokens }), revision);
         return tokens.accessToken;
       } catch (error) {
         if (error instanceof SessionExpiredError && revision === this.revision)
@@ -195,9 +209,10 @@ export class SessionManager {
         throw error;
       }
     })().finally(() => {
-      this.refreshFlight = undefined;
+      if (this.refreshFlight?.token === token) this.refreshFlight = undefined;
     });
-    return this.refreshFlight;
+    this.refreshFlight = { revision, token };
+    return token;
   }
 
   async refreshProfile(): Promise<void> {
@@ -218,7 +233,7 @@ export class SessionManager {
       }
     }
     if (!this.session || revision !== this.revision) return;
-    await this.save({ ...this.session, profile }, revision);
+    await this.save((current) => ({ ...current, profile }), revision);
   }
 
   async signOut(revoke = true): Promise<void> {
@@ -226,9 +241,12 @@ export class SessionManager {
     ++this.revision;
     this.signInAbort?.abort();
     await this.serialize(async () => {
-      await this.secrets.delete(SESSION_KEY);
-      this.session = undefined;
-      this.changed();
+      try {
+        await this.secrets.delete(SESSION_KEY);
+      } finally {
+        this.session = undefined;
+        this.changed();
+      }
     });
     if (revoke && previous?.tokens.refreshToken) {
       try {

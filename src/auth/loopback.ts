@@ -119,6 +119,9 @@ export async function startLoopback(
   return {
     redirectUri,
     response,
-    close: () => fail(new SignInCancelledError()),
+    close: () => {
+      fail(new SignInCancelledError());
+      server.closeAllConnections();
+    },
   };
 }

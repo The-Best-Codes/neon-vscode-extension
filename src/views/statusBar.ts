@@ -27,15 +27,15 @@ export class WorkspaceProjectStatus implements vscode.Disposable {
     const project = this.workspace.project;
     const tooltip = new vscode.MarkdownString();
     if (project) {
-      this.item.text = `$(database) ${project.name}`;
+      this.item.text = `$(database) ${project.name.replace(/\$\(/g, '\\$(')}`;
       tooltip.appendMarkdown(`Neon project for this workspace: **`);
       tooltip.appendText(project.name);
       tooltip.appendMarkdown('**\n\n');
       const file = this.workspace.detectedFrom;
       if (file) {
-        tooltip.appendMarkdown('Detected from `');
+        tooltip.appendMarkdown('Detected from ');
         tooltip.appendText(file);
-        tooltip.appendMarkdown('`. ');
+        tooltip.appendMarkdown('. ');
       }
       tooltip.appendMarkdown('Click to change.');
     } else {

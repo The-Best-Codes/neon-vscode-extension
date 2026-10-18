@@ -429,7 +429,7 @@
           "type": "boolean",
           "default": true,
           "scope": "window",
-          "markdownDescription": "Link the workspace to the Neon project that connection strings in its `.env` files point at. Only the compute host is sent to Neon to find the project. A project you select yourself always takes priority."
+          "markdownDescription": "Link the workspace to the Neon project that connection strings in its `.env` files point at. The files never leave your machine: the compute host is matched against the computes in your Neon projects. A project you select yourself always takes priority."
         }
       }
     }

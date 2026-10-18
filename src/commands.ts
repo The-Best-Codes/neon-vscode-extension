@@ -12,6 +12,7 @@ import {
   type WorkspaceProject,
 } from './workspace/workspaceProject';
 import {
+  byName,
   region,
   type BranchNode,
   type DatabaseNode,
@@ -52,7 +53,10 @@ export function projectCommands(
     const groups = await Promise.all(
       orgs.map(async (org) => ({
         org,
-        projects: await neon.projects.list({ org_id: org.id }).all(),
+        projects: byName(
+          await neon.projects.list({ org_id: org.id }).all(),
+          (p) => p.name,
+        ),
       })),
     );
     const linkedProject = groups
@@ -101,7 +105,11 @@ export function projectCommands(
     return (
       await vscode.window.showQuickPick(
         branches
-          .sort((a, b) => Number(b.default) - Number(a.default))
+          .sort(
+            (a, b) =>
+              Number(b.default) - Number(a.default) ||
+              a.name.localeCompare(b.name),
+          )
           .map((branch) => ({
             label: branch.name,
             description: branch.default ? 'default' : undefined,
@@ -134,7 +142,7 @@ export function projectCommands(
           ? databases[0]
           : (
               await vscode.window.showQuickPick(
-                databases.map((d) => ({
+                byName(databases, (d) => d.name).map((d) => ({
                   label: d.name,
                   description: d.owner_name,
                   database: d,
