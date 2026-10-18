@@ -71,6 +71,7 @@ export class ProjectsTree
     private readonly neon: Neon,
     private readonly signedIn: () => boolean,
     private readonly linked: () => ProjectLink | undefined,
+    private readonly restored: PromiseLike<void>,
   ) {}
 
   refresh(node?: Node): void {
@@ -92,6 +93,8 @@ export class ProjectsTree
   }
 
   async getChildren(node?: Node): Promise<Node[]> {
+    // Keep the view loading until the saved session is known.
+    await this.restored;
     if (!this.signedIn()) return [];
     try {
       return await this.load(node);
@@ -117,32 +120,24 @@ export class ProjectsTree
   }
 
   private async load(node?: Node): Promise<Node[]> {
+    // An empty result is shown as a row rather than a welcome view, so the
+    // view never shows "no projects" while it is still loading.
     if (!node) {
       const orgs = await this.neon.user.organizations();
-      if (orgs.length === 1) return this.loadProjects(orgs[0]!, undefined);
-      return byName(orgs, (org) => org.name).map((org) => ({
-        kind: 'org',
-        org,
-      }));
+      if (orgs.length > 1)
+        return byName(orgs, (org) => org.name).map((org) => ({
+          kind: 'org',
+          org,
+        }));
+      const projects = orgs[0]
+        ? await this.loadProjects(orgs[0], undefined)
+        : [];
+      return projects.length ? projects : [createProjectNode()];
     }
     switch (node.kind) {
       case 'org': {
         const projects = await this.loadProjects(node.org, node);
-        return projects.length
-          ? projects
-          : [
-              {
-                kind: 'message',
-                id: `${key(node)}/empty`,
-                label: 'Create a project',
-                icon: new vscode.ThemeIcon('add'),
-                command: {
-                  title: 'Create Project',
-                  command: 'neon.createProject',
-                  arguments: [node],
-                },
-              },
-            ];
+        return projects.length ? projects : [createProjectNode(node)];
       }
       case 'project': {
         const projectId = node.project.id;
@@ -359,6 +354,20 @@ export class ProjectsTree
     this.events.dispose();
     this.loaded.dispose();
   }
+}
+
+function createProjectNode(org?: OrgNode): MessageNode {
+  return {
+    kind: 'message',
+    id: `${org ? key(org) : 'root'}/empty`,
+    label: org ? 'Create a project' : 'No projects yet. Create one',
+    icon: new vscode.ThemeIcon('add'),
+    command: {
+      title: 'Create Project',
+      command: 'neon.createProject',
+      arguments: [org],
+    },
+  };
 }
 
 function key(node: Node): string {

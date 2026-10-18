@@ -162,17 +162,12 @@
       {
         "view": "neon.projects",
         "contents": "Loading your Neon account…",
-        "when": "!neon.ready"
+        "when": "!neon.ready || neon.signedIn"
       },
       {
         "view": "neon.projects",
         "contents": "Sign in to browse your Neon projects, branches, and databases.\n[Sign in to Neon](command:neon.signIn)",
         "when": "neon.ready && !neon.signedIn"
-      },
-      {
-        "view": "neon.projects",
-        "contents": "You don't have any Neon projects yet.\n[Create Project](command:neon.createProject)",
-        "when": "neon.ready && neon.signedIn"
       }
     ],
     "menus": {

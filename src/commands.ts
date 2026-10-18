@@ -31,7 +31,11 @@ export function projectCommands(
 ) {
   const pickOrg = async (): Promise<Organization | undefined> => {
     const orgs = await neon.user.organizations();
-    if (orgs.length <= 1) return orgs[0];
+    if (!orgs.length)
+      throw new NeonError(
+        'Your Neon account has no organizations. Create one in Neon Console first.',
+      );
+    if (orgs.length === 1) return orgs[0];
     return (
       await vscode.window.showQuickPick(
         orgs.map((org) => ({ label: org.name, org })),

@@ -12,8 +12,12 @@ import { isCancellation, userMessage } from './core/errors';
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
-  await vscode.commands.executeCommand('setContext', 'neon.ready', false);
+  const setContext = (key: string, value: unknown) =>
+    vscode.commands.executeCommand('setContext', key, value);
+  await setContext('neon.ready', false);
   let restoring = true;
+  let finishRestoring!: () => void;
+  const restored = new Promise<void>((resolve) => (finishRestoring = resolve));
   const sessions = new SessionManager(
     context.secrets,
     new NeonOAuthClient(async (url) =>
@@ -33,7 +37,12 @@ export async function activate(
     neon,
     signedIn,
   );
-  const tree = new ProjectsTree(neon, signedIn, () => workspace.project);
+  const tree = new ProjectsTree(
+    neon,
+    signedIn,
+    () => workspace.project,
+    restored,
+  );
   const view = vscode.window.createTreeView('neon.projects', {
     treeDataProvider: tree,
     showCollapseAll: true,
@@ -52,11 +61,7 @@ export async function activate(
   let linkedId = workspace.project?.projectId;
   const onLinkChanged = async () => {
     const projectId = workspace.project?.projectId;
-    await vscode.commands.executeCommand(
-      'setContext',
-      'neon.workspaceProjectLinked',
-      !!projectId,
-    );
+    await setContext('neon.workspaceProjectLinked', !!projectId);
     if (projectId === linkedId) return;
     linkedId = projectId;
     pendingReveal = projectId;
@@ -66,17 +71,16 @@ export async function activate(
   const onAccountChanged = async () => {
     const account = sessions.account;
     view.description = account?.profile.email || undefined;
-    if (account?.id !== accountId) {
-      accountId = account?.id;
+    status.update();
+    const changed = account?.id !== accountId;
+    accountId = account?.id;
+    // Switch the welcome content before the tree empties or reloads, so it
+    // never shows the previous account's state.
+    await setContext('neon.signedIn', !!account);
+    if (changed) {
       tree.refresh();
       void workspace.detect();
     }
-    status.update();
-    await vscode.commands.executeCommand(
-      'setContext',
-      'neon.signedIn',
-      !!sessions.account,
-    );
   };
   context.subscriptions.push(
     sessions,
@@ -131,10 +135,12 @@ export async function activate(
     await sessions.restore();
   } catch (error) {
     void vscode.window.showErrorMessage(userMessage(error));
+  } finally {
+    finishRestoring();
   }
   await onAccountChanged();
   await onLinkChanged();
   restoring = false;
-  await vscode.commands.executeCommand('setContext', 'neon.ready', true);
+  await setContext('neon.ready', true);
   if (sessions.account) void sessions.refreshProfile().catch(() => undefined);
 }
